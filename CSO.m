@@ -1,189 +1,118 @@
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%  Implementation of a competitive swarm optimizer (CSO) for large scale optimization
-%%
-%%  See the details of CSO in the following paper
-%%  R. Cheng and Y. Jin, A Competitive Swarm Optimizer for Large Scale Optmization,
-%%  IEEE Transactions on Cybernetics, 2014
-%%
-%%  The test instances are the CEC'08 benchmark functions for large scale optimization
-%%
-%%  The source code CSO is implemented by Ran Cheng 
-%%
-%%  If you have any questions about the code, please contact: 
-%%  Ran Cheng at r.cheng@surrey.ac.uk 
-%%  Prof. Yaochu Jin at yaochu.jin@surrey.ac.uk
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function [ bestever, bestSwarm ] = cso( varargin )
+
+%  Implementation of a competitive swarm optimizer (CSO) for large scale optimization
+%
+%  See the details of CSO in the following paper
+%  R. Cheng and Y. Jin, A Competitive Swarm Optimizer for Large Scale Optmization,
+%  IEEE Transactions on Cybernetics, 2014
+%
+%  The test instances are the CEC'08 benchmark functions for large scale optimization
+%
+%  The source code CSO is implemented by Ran Cheng
+%
+%  If you have any questions about the code, please contact:
+%  Ran Cheng at r.cheng@surrey.ac.uk
+%  Prof. Yaochu Jin at yaochu.jin@surrey.ac.uk
+%
+%  Code update on 2018-03-18
+%  A.Star, Snowland Co. Ltd , chenxiaolong12315@163.com
+%
+% [res, bestSwarm] = cso(fitness_function, XRRmin, XRRmax, maxfe)
+% input args
+%    fitness: a function handle to calculate the fitness of swarms(popsize x dim matrix)
+%    popsize: integer, the popsize of swarm
+%    bound_min, bound_max: the matrix(1 x dim) is the bounary of the swarms
+%    maxfe: a integer, number of iterations
+%    debug: default 0, display bestfitness in each iteration
+% output args
+% Example:
+%    fun=inline('sqrt(x(:,1).^2+x(:,2).^2)','x');
+%    [res, swarm] = cso(fun,100,[-8,-8],[8,8],1000,0.2);
+%    xi = -8:0.05:8;
+%    yi = -8:0.05:8;
+%    [x,y] = meshgrid(xi, yi);
+%    z = sqrt(x.^2+y.^2);
+%    mesh(x,y,z);
+%    hold on
+%    plot3(swarm(1),swarm(2), res, 'r+')
+
+[fitness_function,m, bound_min, bound_max, maxfe, phi, debug] = checkInput(varargin);
 
 
-addpath(genpath(pwd));
-
-
-global initial_flag
-
-%d: dimensionality
-d = 1000;
-%maxfe: maximal number of fitness evaluations
-maxfe = d*5000;
-%runnum: the number of trial runs
-runnum = 1;
-
-results = zeros(6,runnum);
- 
-
-% The frist six benchmark functions in  CEC'08  test suite.
-% Function 7 is excluded because of the following error thrown by the test suite:
-% 'Undefined function 'FastFractal' for input arguments of type 'char'.'
-for funcid = 1 : 6
-    n = d;
-    initial_flag = 0;
+XRRmin = repmat(bound_min, m, 1);
+XRRmax = repmat(bound_max, m, 1);
+[~, d] = size(XRRmin);
+%% initialization
+p = XRRmin + (XRRmax - XRRmin) .* rand(m, d);
+v = zeros(m,d);
+bestever = 1e200;
+fitness = fitness_function(p);
+FES = m;
+gen = 0;
+bestSwarm = p(1,:);
+ceil_half_m = ceil(m/2);
+%% main loop
+while(FES < maxfe)
     
-    switch funcid
-         case 1
-
-            % lu: define the upper and lower bounds of the variables
-            lu = [-100 * ones(1, n); 100 * ones(1, n)];
-
-        case 2
-
-            lu = [-100 * ones(1, n); 100 * ones(1, n)];
-
-
-        case 3
-
-            lu = [-100 * ones(1, n); 100 * ones(1, n)];
-
-
-        case 4
-
-            lu = [-5 * ones(1, n); 5 * ones(1, n)];
-
-
-        case 5
-
-            lu = [-600* ones(1, n); 600 * ones(1, n)];
-
-
-
-        case 6
-
-            lu = [-32 * ones(1, n); 32 * ones(1, n)];
-
-
-%         case 7
-% 
-%             lu = [-1 * ones(1, n); 1 * ones(1, n)];
-
-
+    
+    % generate random pairs
+    rlist = randperm(m);
+    rpairs = [rlist(1:ceil_half_m); rlist(floor(m/2) + 1:m)]';
+    
+    % calculate the center position
+    center = ones(ceil_half_m,1)*mean(p);
+    
+    % do pairwise competitions
+    mask = (fitness(rpairs(:,1)) > fitness(rpairs(:,2)));
+    losers = mask.*rpairs(:,1) + ~mask.*rpairs(:,2);
+    winners = ~mask.*rpairs(:,1) + mask.*rpairs(:,2);
+    
+    
+    %random matrix
+    randco1 = rand(ceil_half_m, d);
+    randco2 = rand(ceil_half_m, d);
+    randco3 = rand(ceil_half_m, d);
+    
+    % losers learn from winners
+    v(losers,:) = randco1.*v(losers,:) ...,
+        + randco2.*(p(winners,:) - p(losers,:)) ...,
+        + phi*randco3.*(center - p(losers,:));
+    p(losers,:) = p(losers,:) + v(losers,:);
+    
+    % boundary control
+    for i = 1:ceil_half_m
+        p(losers(i),:) = max(p(losers(i),:), XRRmin(losers(i),:));
+        p(losers(i),:) = min(p(losers(i),:), XRRmax(losers(i),:));
     end
     
     
+    % fitness evaluation
+    fitness(losers,:) = fitness_function(p(losers,:));
+    [min_fitness, min_fitness_ind] = min(fitness);
+    if bestever > min_fitness
+        bestever = min_fitness;
+        bestSwarm = p(min_fitness_ind,:);
+    end
+    if debug
+        fprintf('Best fitness: %e\n', bestever);
+    end
+    FES = FES + ceil_half_m;
     
-    %phi setting (the only parameter in CSO, please SET PROPERLY)
-    if(funcid == 1 || funcid == 4 || funcid == 5 || funcid == 6)
-        %for seperable functions
-        if(d >= 2000)
-            phi = 0.2;
-        elseif(d >= 1000)
-            phi = 0.15;
-        elseif(d >=500)
-            phi = 0.1;
-        else
-            phi = 0;
-        end;
-    else
-        if(d >= 2000)
-            phi = 0.2;
-        elseif(d >= 1000)
-            phi = 0.1;
-        elseif(d >=500)
-            phi = 0.05;
-        else
-            phi = 0;
-        end;
-    end;
-    
-    % population size setting
-    if(d >= 5000)
-        m = 1500;
-    elseif(d >= 2000)
-        m = 1000;
-    elseif(d >= 1000)
-        m = 500;
-    elseif(d >= 100)
-        m = 100;
-    end;
+    gen = gen + 1;
+end
+end
 
 
-% several runs
-for run = 1 : runnum
-
-
-
-    % initialization
-    XRRmin = repmat(lu(1, :), m, 1);
-    XRRmax = repmat(lu(2, :), m, 1);
-    rand('seed', sum(100 * clock));
-    p = XRRmin + (XRRmax - XRRmin) .* rand(m, d);
-    fitness = benchmark_func(p, funcid);
-    v = zeros(m,d);
-    bestever = 1e200;
-    
-    FES = m;
-    gen = 0;
-    
-
-    tic;
-    % main loop
-    while(FES < maxfe)
-
-
-        % generate random pairs
-        rlist = randperm(m);
-        rpairs = [rlist(1:ceil(m/2)); rlist(floor(m/2) + 1:m)]';
-        
-        % calculate the center position
-        center = ones(ceil(m/2),1)*mean(p);
-        
-        % do pairwise competitions
-        mask = (fitness(rpairs(:,1)) > fitness(rpairs(:,2)));
-        losers = mask.*rpairs(:,1) + ~mask.*rpairs(:,2); 
-        winners = ~mask.*rpairs(:,1) + mask.*rpairs(:,2);
-   
-        
-        %random matrix 
-        randco1 = rand(ceil(m/2), d);
-        randco2 = rand(ceil(m/2), d);
-        randco3 = rand(ceil(m/2), d);
-        
-        % losers learn from winners
-        v(losers,:) = randco1.*v(losers,:) ...,
-                    + randco2.*(p(winners,:) - p(losers,:)) ...,
-                    + phi*randco3.*(center - p(losers,:));
-        p(losers,:) = p(losers,:) + v(losers,:);
-         
-        % boundary control
-        for i = 1:ceil(m/2)
-            p(losers(i),:) = max(p(losers(i),:), lu(1,:));
-            p(losers(i),:) = min(p(losers(i),:), lu(2,:));
-        end
-
-        
-        % fitness evaluation
-        fitness(losers,:) = benchmark_func(p(losers,:), funcid);
-        bestever = min(bestever, min(fitness));
-        fprintf('Best fitness: %e\n', bestever); 
-        FES = FES + ceil(m/2);
-        
-        gen = gen + 1;
-    end;
-    
-    results(funcid, runnum) = bestever;
-    fprintf('Run No.%d Done!\n', run); 
-    disp(['CPU time: ',num2str(toc)]);
-end;
-
-end;
-
-
-    
-
+function [fitness_function,popsize, XRRmin, XRRmax, maxfe, phi, debug] = checkInput(vars)
+if nargin == 7
+    debug = vars{7};
+else
+    debug = 0;
+end
+fitness_function = vars{1};
+popsize = vars{2};
+XRRmin = vars{3};
+XRRmax = vars{4};
+maxfe = vars{5} * length(XRRmin);
+phi = vars{6};
+end
